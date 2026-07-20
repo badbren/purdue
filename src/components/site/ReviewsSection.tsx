@@ -5,9 +5,9 @@ import Link from "next/link";
 import { Loader2, Quote, Send, Star } from "lucide-react";
 import { getCurrentUser, AUTH_EVENT, type Account } from "@/lib/auth";
 import {
-  addReview,
   averageRating,
-  loadReviews,
+  fetchReviews,
+  postReview,
   type Review,
 } from "@/lib/reviews";
 
@@ -41,7 +41,7 @@ export default function ReviewsSection() {
   const [sent, setSent] = useState(false);
 
   useEffect(() => {
-    setReviews(loadReviews());
+    fetchReviews().then(setReviews);
     const sync = () => setUser(getCurrentUser());
     sync();
     window.addEventListener(AUTH_EVENT, sync);
@@ -52,18 +52,16 @@ export default function ReviewsSection() {
     e.preventDefault();
     if (!user || !text.trim()) return;
     setSending(true);
-    await new Promise((r) => setTimeout(r, 400));
-    // TODO Supabase: insert into `reviews`
-    setReviews(
-      addReview({
-        userId: user.id,
-        name: user.username,
-        rating,
-        text: text.trim(),
-        project: project.trim(),
-      })
-    );
+    const saved = await postReview({
+      userId: user.id,
+      name: user.username,
+      rating,
+      text: text.trim(),
+      project: project.trim(),
+    });
     setSending(false);
+    if (!saved) return;
+    setReviews((prev) => [saved, ...prev]);
     setSent(true);
     setWriting(false);
     setText("");

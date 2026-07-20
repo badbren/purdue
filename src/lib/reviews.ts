@@ -1,5 +1,7 @@
-// Customer reviews, localStorage-backed for the local demo.
-// Becomes a Supabase `reviews` table later (row per review, FK to profiles).
+// Customer reviews, backed by the Supabase `reviews` table.
+// Seed reviews below are shown until real ones exist (remove before launch).
+
+import { supabase } from "./supabase";
 
 export interface Review {
   id: string;
@@ -10,8 +12,6 @@ export interface Review {
   project: string;
   createdAt: string;
 }
-
-const STORAGE_KEY = "perdue_reviews";
 
 const SEED_REVIEWS: Review[] = [
   {
@@ -43,34 +43,70 @@ const SEED_REVIEWS: Review[] = [
   },
 ];
 
-export function loadReviews(): Review[] {
-  if (typeof window === "undefined") return SEED_REVIEWS;
+interface ReviewRow {
+  id: string;
+  user_key: string | null;
+  name: string;
+  rating: number;
+  text: string;
+  project: string;
+  created_at: string;
+}
+
+function rowToReview(r: ReviewRow): Review {
+  return {
+    id: r.id,
+    userId: r.user_key,
+    name: r.name,
+    rating: r.rating,
+    text: r.text,
+    project: r.project ?? "",
+    createdAt: r.created_at,
+  };
+}
+
+/** Real reviews from the DB, padded with seeds while there are few. */
+export async function fetchReviews(): Promise<Review[]> {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return SEED_REVIEWS;
-    return JSON.parse(raw) as Review[];
-  } catch {
+    const { data, error } = await supabase
+      .from("reviews")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    const real = (data as ReviewRow[]).map(rowToReview);
+    return real.length >= 3 ? real : [...real, ...SEED_REVIEWS];
+  } catch (e) {
+    console.error("fetchReviews failed", e);
     return SEED_REVIEWS;
   }
 }
 
-export function addReview(
+export async function postReview(
   review: Omit<Review, "id" | "createdAt">
-): Review[] {
-  const reviews = [
-    {
-      ...review,
-      id: crypto.randomUUID(),
-      createdAt: new Date().toISOString(),
-    },
-    ...loadReviews(),
-  ];
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(reviews));
-  } catch {
-    // storage full — review still shows this session
+): Promise<Review | null> {
+  const row = {
+    id: crypto.randomUUID(),
+    user_key: review.userId,
+    name: review.name,
+    rating: review.rating,
+    text: review.text,
+    project: review.project,
+  };
+  const { error } = await supabase.from("reviews").insert(row);
+  if (error) {
+    console.error("postReview failed", error);
+    return null;
   }
-  return reviews;
+  return {
+    ...review,
+    id: row.id,
+    createdAt: new Date().toISOString(),
+  };
+}
+
+/** Synchronous seed accessor, used by pages that only need a quick list. */
+export function loadReviews(): Review[] {
+  return SEED_REVIEWS;
 }
 
 export function averageRating(reviews: Review[]): number {

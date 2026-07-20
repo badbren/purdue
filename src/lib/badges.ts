@@ -3,8 +3,8 @@
 // runs over real rows (or becomes a DB view).
 
 import type { Account } from "./auth";
-import { loadQuotes } from "./quotes";
-import { loadReviews } from "./reviews";
+import { fetchQuotes } from "./quotes";
+import { fetchReviews } from "./reviews";
 
 export interface Badge {
   id: string;
@@ -25,9 +25,13 @@ export interface Badge {
   hint: string;
 }
 
-export function getBadges(user: Account): Badge[] {
-  const quotes = loadQuotes().filter((q) => q.userId === user.id);
-  const reviews = loadReviews().filter((r) => r.userId === user.id);
+export async function getBadges(user: Account): Promise<Badge[]> {
+  const [allQuotes, allReviews] = await Promise.all([
+    fetchQuotes(),
+    fetchReviews(),
+  ]);
+  const quotes = allQuotes.filter((q) => q.userId === user.id);
+  const reviews = allReviews.filter((r) => r.userId === user.id);
   const photosSent = quotes.reduce((s, q) => s + q.photos.length, 0);
 
   return [

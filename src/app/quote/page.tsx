@@ -19,7 +19,7 @@ import {
 import { SERVICES } from "@/lib/data";
 import {
   MAX_PHOTOS,
-  addQuote,
+  submitQuote,
   compressImage,
   type QuotePhoto,
 } from "@/lib/quotes";
@@ -129,9 +129,7 @@ export default function QuoteWizard() {
   async function submit() {
     setSubmitting(true);
     setError(null);
-    // TODO Supabase: upload photos to Storage, insert row in quote_requests
-    await new Promise((r) => setTimeout(r, 600));
-    const ok = addQuote({
+    const err = await submitQuote({
       id: crypto.randomUUID(),
       userId: getCurrentUser()?.id ?? null,
       service,
@@ -149,9 +147,9 @@ export default function QuoteWizard() {
       createdAt: new Date().toISOString(),
     });
     setSubmitting(false);
-    if (!ok) {
+    if (err) {
       setError(
-        "Your browser's storage is full — try removing a few photos and sending again."
+        "Couldn't reach the server — your request was saved on this device. Check your connection and try again."
       );
       return;
     }

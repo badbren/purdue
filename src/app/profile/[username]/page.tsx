@@ -29,7 +29,7 @@ import {
   type Account,
 } from "@/lib/auth";
 import { getBadges, type Badge } from "@/lib/badges";
-import { loadReviews, type Review } from "@/lib/reviews";
+import { fetchReviews, type Review } from "@/lib/reviews";
 
 const BADGE_ICONS = {
   sparkles: Sparkles,
@@ -76,8 +76,10 @@ export default function ProfilePage() {
       setProfile(acct);
       setChecked(true);
       if (acct) {
-        setBadges(getBadges(acct));
-        setReviews(loadReviews().filter((r) => r.userId === acct.id));
+        getBadges(acct).then(setBadges);
+        fetchReviews().then((all) =>
+          setReviews(all.filter((r) => r.userId === acct.id))
+        );
         setIsOwn(getCurrentUser()?.id === acct.id);
         setBioDraft(acct.bio);
       }

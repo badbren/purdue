@@ -17,7 +17,7 @@ import {
 import Navbar from "@/components/site/Navbar";
 import Footer from "@/components/site/Footer";
 import { getCurrentUser, logout, type Account } from "@/lib/auth";
-import { loadReviews, type Review } from "@/lib/reviews";
+import { fetchReviews, type Review } from "@/lib/reviews";
 
 function AccountContent() {
   const router = useRouter();
@@ -32,7 +32,9 @@ function AccountContent() {
     setUser(u);
     setChecked(true);
     if (u) {
-      setMyReviews(loadReviews().filter((r) => r.userId === u.id));
+      fetchReviews().then((all) =>
+        setMyReviews(all.filter((r) => r.userId === u.id))
+      );
     }
   }, []);
 

@@ -1,13 +1,14 @@
-// Quote-request system. Stored in localStorage for now so the full
-// customer -> Ricky loop is demoable end-to-end. When Supabase is wired up:
-// photos -> Supabase Storage, requests -> `quote_requests` table,
-// replies -> `quote_replies` + email/SMS notification to the customer.
+// Quote-request system, backed by Supabase (quote_requests table +
+// quote-photos storage bucket). localStorage is kept as an offline fallback.
+
+import { supabase } from "./supabase";
 
 export const MAX_PHOTOS = 20;
 
 export interface QuotePhoto {
   id: string;
   name: string;
+  /** data URL while composing; public storage URL once submitted */
   dataUrl: string;
 }
 
@@ -15,7 +16,6 @@ export type QuoteStatus = "new" | "quoted" | "archived";
 
 export interface QuoteRequest {
   id: string;
-  /** account id if the customer was signed in when submitting */
   userId?: string | null;
   service: string;
   description: string;
@@ -39,88 +39,150 @@ export interface QuoteRequest {
 
 const STORAGE_KEY = "perdue_quotes";
 
-// Demo rows shown until real requests come in.
-const SEED_QUOTES: QuoteRequest[] = [
-  {
-    id: "seed-1",
-    service: "Wainscoting & Accent Walls",
-    description:
-      "Looking to do board and batten on the long wall in the dining room, maybe 12ft wide, and a picture-frame molding accent in the office.",
-    area: "Dining room + home office",
-    size: "Two walls, ~200 sq ft total",
-    timeline: "Within a month",
-    budget: "$1,500 - $3,000",
-    photos: [],
-    name: "Kayla Simmons",
-    phone: "(555) 762-0148",
-    email: "kayla.simmons@email.com",
-    contactPref: "text",
-    status: "new",
-    createdAt: "2026-07-18T14:32:00.000Z",
-  },
-  {
-    id: "seed-2",
-    service: "Crown Molding",
-    description:
-      "New build, builder-grade everything. Want crown in the primary bedroom, living room, and hallway. 9ft ceilings.",
-    area: "Bedroom, living room, hallway",
-    size: "~140 linear ft",
-    timeline: "Flexible",
-    budget: "Not sure yet",
-    photos: [],
-    name: "Marcus Webb",
-    phone: "(555) 391-8827",
-    email: "mwebb@email.com",
-    contactPref: "call",
-    status: "quoted",
-    createdAt: "2026-07-15T09:10:00.000Z",
-    reply: {
-      amount: "$2,400",
-      message:
-        "Thanks Marcus — based on your photos, figure $2,400 for all three areas including material (5.25in primed MDF crown), caulked and ready for paint. Can start week after next.",
-      sentAt: "2026-07-16T11:05:00.000Z",
-    },
-  },
-];
+/* ---------------- Supabase-backed API ---------------- */
 
-export function loadQuotes(): QuoteRequest[] {
-  if (typeof window === "undefined") return SEED_QUOTES;
+interface QuoteRow {
+  id: string;
+  user_key: string | null;
+  service: string;
+  description: string;
+  area: string;
+  size: string;
+  timeline: string;
+  budget: string;
+  name: string;
+  phone: string;
+  email: string;
+  contact_pref: string;
+  photos: { id: string; name: string; url: string }[];
+  status: QuoteStatus;
+  reply: QuoteRequest["reply"] | null;
+  created_at: string;
+}
+
+function rowToQuote(r: QuoteRow): QuoteRequest {
+  return {
+    id: r.id,
+    userId: r.user_key,
+    service: r.service,
+    description: r.description,
+    area: r.area ?? "",
+    size: r.size ?? "",
+    timeline: r.timeline ?? "",
+    budget: r.budget ?? "",
+    photos: (r.photos ?? []).map((p) => ({
+      id: p.id,
+      name: p.name,
+      dataUrl: p.url,
+    })),
+    name: r.name,
+    phone: r.phone,
+    email: r.email,
+    contactPref: (r.contact_pref as QuoteRequest["contactPref"]) ?? "call",
+    status: r.status,
+    createdAt: r.created_at,
+    reply: r.reply ?? undefined,
+  };
+}
+
+/** Upload photos to storage + insert the request. Returns null on success, error message on failure. */
+export async function submitQuote(quote: QuoteRequest): Promise<string | null> {
   try {
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) return SEED_QUOTES;
-    return JSON.parse(raw) as QuoteRequest[];
-  } catch {
-    return SEED_QUOTES;
+    const uploaded: { id: string; name: string; url: string }[] = [];
+    for (const [i, photo] of quote.photos.entries()) {
+      const blob = await fetch(photo.dataUrl).then((r) => r.blob());
+      const path = `${quote.id}/${i + 1}.jpg`;
+      const { error: upErr } = await supabase.storage
+        .from("quote-photos")
+        .upload(path, blob, { contentType: "image/jpeg", upsert: true });
+      if (upErr) throw upErr;
+      const { data } = supabase.storage.from("quote-photos").getPublicUrl(path);
+      uploaded.push({ id: photo.id, name: photo.name, url: data.publicUrl });
+    }
+
+    const { error } = await supabase.from("quote_requests").insert({
+      id: quote.id,
+      user_key: quote.userId ?? null,
+      service: quote.service,
+      description: quote.description,
+      area: quote.area,
+      size: quote.size,
+      timeline: quote.timeline,
+      budget: quote.budget,
+      name: quote.name,
+      phone: quote.phone,
+      email: quote.email,
+      contact_pref: quote.contactPref,
+      photos: uploaded,
+      status: "new",
+    });
+    if (error) throw error;
+    return null;
+  } catch (e) {
+    console.error("submitQuote failed", e);
+    // offline fallback so the request isn't lost
+    addQuoteLocal(quote);
+    return e instanceof Error ? e.message : "Something went wrong";
   }
 }
 
-function persist(quotes: QuoteRequest[]): boolean {
+export async function fetchQuotes(): Promise<QuoteRequest[]> {
   try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(quotes));
+    const { data, error } = await supabase
+      .from("quote_requests")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (error) throw error;
+    return (data as QuoteRow[]).map(rowToQuote);
+  } catch (e) {
+    console.error("fetchQuotes failed, using local fallback", e);
+    return loadQuotesLocal();
+  }
+}
+
+export async function updateQuoteRemote(
+  id: string,
+  patch: { status?: QuoteStatus; reply?: QuoteRequest["reply"] }
+): Promise<boolean> {
+  const { error } = await supabase
+    .from("quote_requests")
+    .update({
+      ...(patch.status ? { status: patch.status } : {}),
+      ...(patch.reply ? { reply: patch.reply } : {}),
+    })
+    .eq("id", id);
+  if (error) console.error("updateQuote failed", error);
+  return !error;
+}
+
+/* ---------------- localStorage fallback ---------------- */
+
+export function loadQuotesLocal(): QuoteRequest[] {
+  if (typeof window === "undefined") return [];
+  try {
+    return JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? "[]");
+  } catch {
+    return [];
+  }
+}
+
+export function addQuoteLocal(quote: QuoteRequest): boolean {
+  try {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify([quote, ...loadQuotesLocal()])
+    );
     return true;
   } catch {
-    // Likely QuotaExceededError from photo data — caller shows a message.
     return false;
   }
 }
 
-export function addQuote(quote: QuoteRequest): boolean {
-  const quotes = loadQuotes();
-  return persist([quote, ...quotes]);
-}
-
-export function updateQuote(
-  id: string,
-  patch: Partial<QuoteRequest>
-): QuoteRequest[] {
-  const quotes = loadQuotes().map((q) => (q.id === id ? { ...q, ...patch } : q));
-  persist(quotes);
-  return quotes;
-}
+/* ---------------- helpers ---------------- */
 
 /**
- * Downscale + JPEG-compress an image in the browser so 20 photos stay
- * well under localStorage limits and uploads to Supabase later are fast.
+ * Downscale + JPEG-compress an image in the browser so uploads are fast
+ * and 20 photos stay small.
  */
 export function compressImage(
   file: File,

@@ -15,10 +15,11 @@ import {
 } from "lucide-react";
 import StatusBadge from "@/components/dashboard/StatusBadge";
 import {
-  loadQuotes,
+  fetchQuotes,
   timeAgo,
-  updateQuote,
+  updateQuoteRemote,
   type QuoteRequest,
+  type QuoteStatus,
 } from "@/lib/quotes";
 
 const inputClass =
@@ -33,9 +34,10 @@ export default function QuotesInbox() {
   const [justSent, setJustSent] = useState(false);
 
   useEffect(() => {
-    const loaded = loadQuotes();
-    setQuotes(loaded);
-    if (loaded.length > 0) setSelectedId(loaded[0].id);
+    fetchQuotes().then((loaded) => {
+      setQuotes(loaded);
+      if (loaded.length > 0) setSelectedId((cur) => cur ?? loaded[0].id);
+    });
   }, []);
 
   const selected = quotes.find((q) => q.id === selectedId) ?? null;
@@ -47,23 +49,26 @@ export default function QuotesInbox() {
     setJustSent(false);
   }
 
+  function applyPatch(id: string, patch: Partial<QuoteRequest>) {
+    setQuotes((prev) => prev.map((q) => (q.id === id ? { ...q, ...patch } : q)));
+  }
+
   function sendReply() {
     if (!selected || !replyMessage.trim()) return;
-    // TODO Supabase: insert reply + trigger email/SMS to customer
-    const updated = updateQuote(selected.id, {
-      status: "quoted",
-      reply: {
-        amount: replyAmount,
-        message: replyMessage,
-        sentAt: new Date().toISOString(),
-      },
-    });
-    setQuotes(updated);
+    const reply = {
+      amount: replyAmount,
+      message: replyMessage,
+      sentAt: new Date().toISOString(),
+    };
+    applyPatch(selected.id, { status: "quoted", reply });
     setJustSent(true);
+    // TODO: trigger email/SMS to the customer when notifications are set up
+    updateQuoteRemote(selected.id, { status: "quoted", reply });
   }
 
   function archive(id: string) {
-    setQuotes(updateQuote(id, { status: "archived" }));
+    applyPatch(id, { status: "archived" as QuoteStatus });
+    updateQuoteRemote(id, { status: "archived" });
   }
 
   const newCount = quotes.filter((q) => q.status === "new").length;
@@ -250,8 +255,8 @@ export default function QuotesInbox() {
                   <div className="mt-4 flex items-center gap-3 rounded-xl border border-emerald-400/20 bg-emerald-400/5 p-4">
                     <CheckCircle2 size={20} className="text-emerald-300" />
                     <p className="text-sm">
-                      Quote saved! Once Supabase is hooked up this will email/text{" "}
-                      {selected.name.split(" ")[0]} automatically.
+                      Quote saved! {selected.name.split(" ")[0]} can be notified
+                      automatically once we set up email/text alerts.
                     </p>
                   </div>
                 ) : (

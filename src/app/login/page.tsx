@@ -5,6 +5,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { HardHat, Hammer, Loader2, LogIn, User } from "lucide-react";
 import { login } from "@/lib/auth";
+import { supabase } from "@/lib/supabase";
 
 const inputClass =
   "w-full rounded-lg border border-line bg-raised px-4 py-3 text-sm text-foreground placeholder:text-muted/60 outline-none transition-colors focus:border-accent";
@@ -17,6 +18,8 @@ export default function LoginPage() {
   const [tab, setTab] = useState<"customer" | "team">("customer");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
+  const [teamName, setTeamName] = useState("");
+  const [teamPin, setTeamPin] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -36,9 +39,23 @@ export default function LoginPage() {
 
   async function handleTeam(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
+    setError(null);
     setLoading(true);
-    // TODO: Supabase Auth with role check (owner/employee)
-    await new Promise((r) => setTimeout(r, 500));
+    const { data, error: rpcError } = await supabase.rpc("team_login", {
+      p_name: teamName,
+      p_pin: teamPin,
+    });
+    setLoading(false);
+    if (rpcError || !data?.ok) {
+      setError(
+        rpcError ? "Couldn't reach the server — try again." : "Wrong name or PIN."
+      );
+      return;
+    }
+    window.localStorage.setItem(
+      "perdue_team",
+      JSON.stringify({ name: data.name, role: data.role })
+    );
     router.push("/dashboard");
   }
 
@@ -144,13 +161,34 @@ export default function LoginPage() {
                 </p>
               </div>
               <div>
-                <label className={labelClass}>Email</label>
-                <input required type="email" placeholder="you@perdueconstruction.com" className={inputClass} />
+                <label className={labelClass}>Name</label>
+                <input
+                  required
+                  value={teamName}
+                  onChange={(e) => setTeamName(e.target.value)}
+                  placeholder="Your first name"
+                  className={inputClass}
+                  autoComplete="username"
+                />
               </div>
               <div>
-                <label className={labelClass}>Password</label>
-                <input required type="password" placeholder="••••••••" className={inputClass} />
+                <label className={labelClass}>PIN</label>
+                <input
+                  required
+                  type="password"
+                  inputMode="numeric"
+                  value={teamPin}
+                  onChange={(e) => setTeamPin(e.target.value)}
+                  placeholder="••••"
+                  className={inputClass}
+                  autoComplete="current-password"
+                />
               </div>
+              {error && (
+                <p className="rounded-lg border border-red-400/20 bg-red-400/10 px-4 py-2.5 text-sm text-red-300">
+                  {error}
+                </p>
+              )}
               <button
                 type="submit"
                 disabled={loading}
@@ -159,10 +197,6 @@ export default function LoginPage() {
                 {loading ? <Loader2 size={18} className="animate-spin" /> : <LogIn size={18} />}
                 {loading ? "Signing in..." : "Sign in"}
               </button>
-              <p className="text-center text-xs text-muted">
-                Placeholder for now — any email/password gets in. Supabase Auth
-                with real roles comes next.
-              </p>
             </form>
           )}
         </div>
